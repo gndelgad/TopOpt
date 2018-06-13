@@ -1,0 +1,236 @@
+//author: Gabriel Delgado
+//Description: This code generates 3D shift, first derivative and second derivative matrices for a finite difference method
+
+///////////////////////////////////////
+//Ln -> x // Number of elements in X
+//Mn -> y // Number of elements in Y
+//Nn -> z // Number of elements in Z
+///////////////////////////////////////
+
+// ======================================== SHIFT MATRICES =============================================== //
+matrix Pz;
+{
+	int[int] I=(0:Ln*Mn*Nn-1);
+	int[int] J=(-1:Ln*Mn*Nn-2);
+	real[int] mat(Ln*Mn*Nn);mat=1.;
+	for(int i=0;i<Ln*Mn;i++) J(i*Nn)=i*Nn;
+	Pz=[I,J,mat];
+	Pz.resize(Vh.ndof,Vh.ndof);
+};
+
+matrix Mz;
+{
+	int[int] I=(0:Ln*Mn*Nn-1);
+	int[int] J=(1:Ln*Mn*Nn);
+	real[int] mat(Ln*Mn*Nn);mat=1.;
+	for(int i=0;i<Ln*Mn;i++) J(i*Nn+(Nn-1))=i*Nn+(Nn-1);
+	Mz=[I,J,mat];
+	Mz.resize(Vh.ndof,Vh.ndof);
+};
+
+matrix Px;
+{
+	int[int] I=(0:Ln*Mn*Nn-1);
+	int[int] D(I.n);D=-Nn;
+	int[int] J=I+D;
+	for(int i=0;i<Mn;i++) J(0+i*(Ln*Nn):i*(Ln*Nn)+(Nn-1))=(0+i*(Ln*Nn):i*(Ln*Nn)+(Nn-1));
+	real[int] mat(I.n);mat=1.;
+	Px=[I,J,mat];
+	Px.resize(Vh.ndof,Vh.ndof);
+};
+
+matrix Mx;
+{
+	int[int] I=(0:Ln*Mn*Nn-1);
+	int[int] D(I.n);D=Nn;
+	int[int] J=I+D;
+	for(int i=0;i<Mn;i++) J(Nn*(Ln-1)+i*(Ln*Nn):(Ln*Nn-1)+i*(Ln*Nn))=(Nn*(Ln-1)+i*(Ln*Nn):(Ln*Nn-1)+i*(Ln*Nn));
+	real[int] mat(I.n);mat=1.;
+	Mx=[I,J,mat];
+	Mx.resize(Vh.ndof,Vh.ndof);
+};
+
+matrix Py;
+{
+	int[int] I=(0:Ln*Mn*Nn-1);
+	int[int] D(I.n);D=-Ln*Nn;
+	int[int] J=I+D;
+	J(0:Ln*Nn-1)=(0:Ln*Nn-1);
+	real[int] mat(I.n);mat=1.;
+	Py=[I,J,mat];
+	Py.resize(Vh.ndof,Vh.ndof);
+};
+
+matrix My;
+{
+	int[int] I=(0:Ln*Mn*Nn-1);
+	int[int] D(I.n);D=Ln*Nn;
+	int[int] J=I+D;
+	J(Ln*Nn*(Mn-1):Ln*Mn*Nn-1)=(Ln*Nn*(Mn-1):Ln*Mn*Nn-1);
+	real[int] mat(I.n);mat=1.;
+	My=[I,J,mat];
+	My.resize(Vh.ndof,Vh.ndof);
+};
+
+matrix Pz0 = Pz, Mz0 = Mz, Px0 = Px, Mx0 = Mx, Py0 = Py, My0 = My;// Shift matrices for redistatiation (not compulsory)
+// ======================================== FIRST ORDER DERIVATIVE MATRICES =============================================== //
+real deltax = (BB(0,1)-BB(0,0))/NN[0],deltay = (BB(1,1)-BB(1,0))/NN[1],deltaz = (BB(2,1)-BB(2,0))/NN[2];
+
+matrix OneOverDx;{
+ real[int] d(Vh.ndof);d=1./deltax;OneOverDx=[d];
+}
+matrix OneOverDy;{
+ real[int] d(Vh.ndof);d=1./deltay;OneOverDy=[d];
+}
+matrix OneOverDz;{
+ real[int] d(Vh.ndof);d=1./deltaz;OneOverDz=[d];
+}
+matrix Id;{
+	real[int] one(Vh.ndof);one=1.;
+	Id=[one];
+}
+// First order operators
+matrix Dpx;{
+	real[int] one(Vh.ndof);
+	one=-1.;
+	matrix One=[one];
+	matrix T=Mx+One;
+	Dpx=OneOverDx*T;
+}
+matrix Dmx;{
+	real[int] one(Vh.ndof);
+	one=-1.;
+	matrix One=[one];
+	matrix mPx=One*Px;
+	matrix T=Id+mPx;
+	Dmx=OneOverDx*T;
+}
+matrix Dpy;{
+	real[int] one(Vh.ndof);
+	one=-1.;
+	matrix One=[one];
+	matrix T=My+One;
+	Dpy=OneOverDy*T;
+}
+matrix Dmy;{
+	real[int] one(Vh.ndof);
+	one=-1.;
+	matrix One=[one];
+	matrix mPy=One*Py;
+	matrix T=Id+mPy;
+	Dmy=OneOverDy*T;
+}
+matrix Dpz;{
+	real[int] one(Vh.ndof);
+	one=-1.;
+	matrix One=[one];
+	matrix T=Mz+One;
+	Dpz=OneOverDz*T;
+}
+matrix Dmz;{
+	real[int] one(Vh.ndof);
+	one=-1.;
+	matrix One=[one];
+	matrix mPz=One*Pz;
+	matrix T=Id+mPz;
+	Dmz=OneOverDz*T;
+}
+
+matrix Dpz0 = Dpz, Dmz0 = Dmz, Dpx0 = Dpx, Dmx0 = Dmx, Dpy0 = Dpy, Dmy0 = Dmy; // First order derivative matrices for redistatiation (not compulsory)
+// ======================================== SECOND ORDER DERIVATIVE MATRICES =============================================== //
+
+matrix OneOverDx2;{
+	OneOverDx2=OneOverDx*OneOverDx;
+}
+matrix OneOverDy2;{
+	OneOverDy2=OneOverDy*OneOverDy;
+}
+matrix OneOverDz2;{
+	OneOverDz2=OneOverDz*OneOverDz;
+}
+// Second order operators
+matrix Dpxx;{
+	//Dpxx=(Mx^2-2*Mx+Id)*OnOverDx^2
+	matrix Mx2=Mx*Mx;
+	real[int] m2(Vh.ndof); m2=-2.;
+	matrix m2Id=[m2];
+	matrix m2Mx=m2Id*Mx;
+	matrix inter1=Mx2+m2Mx;
+	matrix inter2=inter1+Id;
+	Dpxx=OneOverDx2*inter2;
+}
+matrix Dmxx;{
+	//Dpxx=(Id-2*Px+Px*Px)*OnOverDx^2
+	matrix Px2;
+	Px2=Px*Px;
+	real[int] m2(Vh.ndof); m2=-2.;
+	matrix m2Id=[m2];
+	matrix m2Px=m2Id*Px;
+	matrix inter1=Px2+m2Px;
+	matrix inter2=inter1+Id;
+	Dmxx=OneOverDx2*inter2;
+}
+matrix D0xx;{
+	//D0xx=(Px-2*Id+Mx)*OnOverDx^2
+	real[int] m2(Vh.ndof); m2=-2.;
+	matrix m2Id=[m2];
+	matrix inter1=Px+m2Id;
+	matrix inter2=inter1+Mx;
+	D0xx=OneOverDx2*inter2;
+}
+matrix Dpyy;{
+	//Dpyy=(My^2-2*My+Id)*OnOverDy^2
+	matrix My2=My*My;
+	real[int] m2(Vh.ndof); m2=-2.;
+	matrix m2Id=[m2];
+	matrix m2My=m2Id*My;
+	matrix inter1=My2+m2My;
+	matrix inter2=inter1+Id;
+	Dpyy=OneOverDy2*inter2;
+}
+matrix Dmyy;{
+	//Dpyy=(Id-2*Py+2*Py*Py)*OnOverDy^2
+	matrix Py2=Py*Py;
+	real[int] m2(Vh.ndof); m2=-2.;
+	matrix m2Id=[m2];
+	matrix m2Py=m2Id*Py;
+	matrix inter1=Py2+m2Py;
+	matrix inter2=inter1+Id;
+	Dmyy=OneOverDy2*inter2;
+}
+matrix D0yy;{
+	//D0yy=(Py-2*Id+My)*OnOverDy^2
+	real[int] m2(Vh.ndof); m2=-2.;
+	matrix m2Id=[m2];
+	matrix inter1=Py+m2Id;
+	matrix inter2=inter1+My;
+	D0yy=OneOverDy2*inter2;
+}
+matrix Dpzz;{
+	//Dpxx=(Mz^2-2*Mz+Id)*OnOverDz^2
+	matrix Mz2=Mz*Mz;
+	real[int] m2(Vh.ndof); m2=-2.;
+	matrix m2Id=[m2];
+	matrix m2Mz=m2Id*Mz;
+	matrix inter1=Mz2+m2Mz;
+	matrix inter2=inter1+Id;
+	Dpzz=OneOverDz2*inter2;
+}
+matrix Dmzz;{
+	//Dpzz=(Id-2*Pz+2*Pz*Pz)*OnOverDz^2
+	matrix Pz2=Pz*Pz;
+	real[int] m2(Vh.ndof); m2=-2.;
+	matrix m2Id=[m2];
+	matrix m2Pz=m2Id*Pz;
+	matrix inter1=Pz2+m2Pz;
+	matrix inter2=inter1+Id;
+	Dmzz=OneOverDz2*inter2;
+}
+matrix D0zz;{
+	//D0zz=(Pz-2*Id+Mz)*OnOverDz^2
+	real[int] m2(Vh.ndof); m2=-2.;
+	matrix m2Id=[m2];
+	matrix inter1=Pz+m2Id;
+	matrix inter2=inter1+Mz;
+	D0zz=OneOverDz2*inter2;
+}

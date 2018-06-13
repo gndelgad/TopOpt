@@ -1,0 +1,115 @@
+//////////////////////////////////////////////
+//Functional spaces and main functions 
+//////////////////////////////////////////////
+fespace Xh(Th,[P1,P1]),Vht(Th,P1),Rh(Th,P0),Rht(Th,P0edge);
+searchMethod=1; //Necessary for P0-P0 fast interpolation
+macro u [u1,u2] //
+macro v [v1,v2]	//
+Xh u,v;	// State functions							
+Vht V,Vtest;	// velocity field
+//////////////////////////////////////////////
+//Phase recognition 
+//////////////////////////////////////////////
+varf PsiMean(unused,test) = int2d(Th)(Psi*test*1./area);
+Rh Psih; Psih[] = PsiMean(0,Rh);
+//Rh SignPsih = Sign(Psih);
+Rh SignPsih; SignPsih = (region==3?-1:1); 
+//plot(SignPsih,fill=1,wait=1);
+//macro CC() (Diag((Psih<0?1:0))*CC1+Diag((Psih>0?1:0))*CC2)// 									 									
+macro CC() (Diag(region==3)*CC1+Diag(region!=3)*CC2)// 									 									
+//////////////////////////////////////////////
+//Physical problem
+//////////////////////////////////////////////	
+problem Elasticity(u,v)=
+	int2d(Th,qft=qf1pT)((CC*e(u))'*e(v))
+	-int1d(Th,Neumann)(g'*v)
+	+int2d(Th)(1e-6*(u'*v)) ///avoids the matrix to be singular when disconnected structures arise
++on(Dirichlet,u1=0,u2=0);
+//////////////////////////////////////////////
+//Compliance computation
+//////////////////////////////////////////////	
+func real Compliance()
+{
+	real c = (int1d(Th,Neumann)((g'*u)));
+	return c;
+}
+//////////////////////////////////////////////
+//Volume computation
+//////////////////////////////////////////////	
+func real Volume()
+{
+	real vol = int2d(Th)((Psih<0))/(L*H);
+	return vol;
+}
+//////////////////////////////////////////////
+//Interpolation function (P0->P1 2D)
+//////////////////////////////////////////////
+func real[int] Average(real[int] F,real[int] ar,real sign)
+	{
+	real[int] FP1(Vht.ndof),FP1n(Vht.ndof);	
+	FP1n = 1e-6*ar.min;
+		for (int i=0;i<Th.nt;i++)
+		{
+			if(SignPsih[][i]==sign | sign==0)
+			{	
+			for (int j=0; j <3; j++)
+			{
+			  FP1[Vht(i,j)] += F[i]*ar[i];
+			  FP1n[Vht(i,j)] += 1*ar[i];
+			}
+			}
+		}
+	FP1./=FP1n;
+	return FP1;
+	}
+//////////////////////////////////////////////
+//Shape gradient exact formula 
+//////////////////////////////////////////////
+func real[int] ShapeGradientJump(real regstep)
+{
+	macro NN [N.x^2,N.y^2,sqrt(2.)*N.x*N.y]//
+    macro NT [-N.x*N.y,N.x*N.y,sqrt(2.)*(N.x^2-N.y^2)]//
+    macro TT [N.y^2,N.x^2,-sqrt(2.)*N.x*N.y]//
+	
+    macro JumpDeriv(u) 
+	-0.5*jump(SignPsih)*
+	(-((CC*e(u))'*NN)*jump(e(u)'*NN)-2*((CC*e(u))'*NT)*jump(e(u)'*NT)+jump((CC*e(u))'*TT)*(e(u)'*TT))//
+	//(jump((CC*e(u))'*TT)*(e(u)'*TT))//
+	
+	varf Jump(unused,test) = int1d(Th,10)(JumpDeriv(u)*test*1./lenEdge);
+	Rht JumpGlobal; JumpGlobal[] = Jump(0,Rht);
+	
+	//cout<<"Degrees freedom (vertices): "<<Deriv1GlobalReg[].n<<endl;
+	//cout<<"Degrees freedom (triangles): "<<Deriv1Global[].n<<endl;
+	//cout<<"Degrees freedom (edges): "<<JumpGlobal[].n<<endl;
+	//cout<<"Number of edges boundary: "<<Th.nbe<<endl;
+    
+	Vht JumpReg,JumpRegLen=1e-6*regstep;
+	
+	for(int k=0;k<Th.nbe;k++)
+	{
+		//if(Th.be(k)[0].label==10 & Th.be(k)[1].label==10)
+		{
+		int tria = int(Th.be(k).Element);
+		int edg = Th.be(k).whoinElement;
+		//int tria2 = Th[tria1].adj(edg);
+		
+		//jump = SignPsih(tria1)*(Deriv1Global[tria1]-Deriv1Global[tria2]);
+		real jump = JumpGlobal[][Rht(tria,edg)];// triangle i, edge j={0,1,2}
+		
+		int p1=int(Th.be(k)[0]), p2=int(Th.be(k)[1]);	
+		
+		real len = sqrt((Th.be(k)[0].x-Th.be(k)[1].x)^2+(Th.be(k)[0].y-Th.be(k)[1].y)^2);
+		
+		JumpReg[][p1] += jump*len;	
+		JumpReg[][p2] += jump*len;	
+		
+		JumpRegLen[][p1] += len;
+		JumpRegLen[][p2] += len;
+		}
+	}
+	
+	JumpReg[]./=JumpRegLen[];
+	
+	return JumpReg[];
+}	

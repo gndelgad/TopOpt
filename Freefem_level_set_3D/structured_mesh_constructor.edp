@@ -1,0 +1,303 @@
+//author: Gabriel Delgado
+//Description: This code generates a 3D structured tetrahedral mesh
+
+//NN = the number cubes in each direction
+//BB = bounding box
+//IsoCubeMesh = main constructor
+//IsoCube.mesh = output file
+
+load "tetgen"
+load "medit"
+load "msh3"
+//https://www.ics.uci.edu/~eppstein/projects/tetra/
+
+// ======================================================================================= //
+// Computes de volume of a tetrahedra
+func real CrossProdVol(real[int]O,real[int]A,real[int]B,real[int]C) 
+{
+real[int] AO = O-A, AB=B-A, AC=C-A;
+real[int] ABXAC(3);
+ABXAC(0) = AB(1)*AC(2)-AB(2)*AC(1); ABXAC(1) = AB(2)*AC(0)-AB(0)*AC(2); ABXAC(2) = AB(0)*AC(1)-AB(1)*AC(0);
+return (1./6)*(ABXAC(0)*AO(0)+ABXAC(1)*AO(1)+ABXAC(2)*AO(2));	
+}	
+// ======================================================================================= //
+// Structured mesh index counter (mesh file counter, not internal!)
+func int CubeNodeCounter(int nx,int ny,int nz,int i,int j,int k)
+{
+return (j*(nx+1)*(nz+1)+i*(nz+1)+k+1);	
+}	
+// ======================================================================================= //
+// Cube rotation operator
+func int[int] Rotation(int i,int j,int k)
+{
+int[int,int] PP(8,3); PP = [[i,j,k],[i,j+1,k],[i+1,j,k],[i,j+1,k+1],[i,j,k+1],[i+1,j,k+1],[i+1,j+1,k+1],[i+1,j+1,k]];
+int[int,int] Q(8,3); Q = PP;
+
+int Nmoves = (i+j+k); int Nrotation = (Nmoves%4);
+if(Nrotation>0)
+{
+	for(int m=0;m<Nrotation;m++)
+	{
+	Q(0,:) = PP(1,:);
+	Q(1,:) = PP(7,:);
+	Q(2,:) = PP(0,:);
+	Q(3,:) = PP(6,:);
+	Q(4,:) = PP(3,:);
+	Q(5,:) = PP(4,:);
+	Q(6,:) = PP(5,:);
+	Q(7,:) = PP(2,:);
+	PP = Q;
+	}
+}
+return Q;
+}
+// ======================================================================================= //
+func real IsoCubeMesh(int nx,int ny,int nz, real Hx, real Hy, real Hz)
+{
+{
+ofstream IsoCube("IsoCube.mesh");
+IsoCube<<"MeshVersionFormatted 1"<<endl;
+IsoCube<<""<<endl;
+IsoCube<<"Dimension 3"<<endl;
+IsoCube<<""<<endl;
+//VERTICES
+IsoCube<<"Vertices"<<endl;
+int Nvertices = (nx+1)*(ny+1)*(nz+1);
+IsoCube<<Nvertices<<endl;	
+real[int,int] vertices(Nvertices,4);
+int Ncounter=0;
+for(int j=0;j<=ny;j++)
+{
+	for(int i=0;i<=nx;i++)
+	{
+		for(int k=0;k<=nz;k++)
+		{
+			vertices(Ncounter,0)=-Hx/2+i*(Hx/nx);
+			vertices(Ncounter,1)=-Hy/2+j*(Hy/ny);
+			vertices(Ncounter,2)=-Hz/2+k*(Hz/nz);
+			int label;
+			if(i==0){label=1;}
+			else if(i==nx){label=2;}
+			else if(j==0){label=3;}
+			else if(j==ny){label=4;}
+			else if(k==0){label=5;}
+			else if(k==nz){label=6;}
+			else{label=0;}
+			vertices(Ncounter,3)=label;
+			IsoCube<<vertices(Ncounter,0)<<" "<<vertices(Ncounter,1)<<" "<<vertices(Ncounter,2)<<" "<<vertices(Ncounter,3)<<endl;
+			Ncounter++;
+		}
+	}	
+}
+IsoCube<<""<<endl;
+//TETRA
+IsoCube<<"Tetrahedra"<<endl;
+int Ntetra = 5*nx*ny*nz;
+IsoCube<<Ntetra<<endl;
+int[int,int] Tetra(Ntetra,5); Tetra = 0;
+Ncounter = 0;
+int Ntriangle = 2*2*(nx*ny+nx*nz+ny*nz);
+int[int,int] Triangles(Ntriangle,4); Triangles = 0;
+int Tcounter=0;
+
+for(int j=0;j<ny;j++)
+{
+	for(int i=0;i<nx;i++)
+	{
+		for(int k=0;k<nz;k++)
+		{
+			int[int,int] T1(4,3),T2(4,3),T3(4,3),T4(4,3),T5(4,3);
+			//int[int] P(5,3); P = [[i,j,k],[i,j+1,k],[i+1,j,k],[i,j+1,k+1],[i,j,k+1],[i+1,j,k+1],[i+1,j+1,k+1],[i+1,j+1,k]];
+			int[int,int] Q(8,3); Q = Rotation(i,j,k);
+			T1(0,:) = Q(0,:);T1(1,:) = Q(4,:); T1(2,:) = Q(1,:); T1(3,:) = Q(2,:);
+			T2(0,:) = Q(4,:);T2(1,:) = Q(1,:); T2(2,:) = Q(3,:); T2(3,:) = Q(6,:);
+			T3(0,:) = Q(2,:);T3(1,:) = Q(5,:); T3(2,:) = Q(4,:); T3(3,:) = Q(6,:);
+			T4(0,:) = Q(1,:);T4(1,:) = Q(2,:); T4(2,:) = Q(7,:); T4(3,:) = Q(6,:);
+			T5(0,:) = Q(1,:);T5(1,:) = Q(2,:); T5(2,:) = Q(4,:); T5(3,:) = Q(6,:);
+						
+			if(i==0){
+				int config = (i+j+k)%2; 
+				if(config==0)
+				{
+					int[int] TNodes(5);
+					TNodes = [CubeNodeCounter(nx,ny,nz,i,j,k),CubeNodeCounter(nx,ny,nz,i,j+1,k),CubeNodeCounter(nx,ny,nz,i,j,k+1),1];
+					Triangles(Tcounter,:) = TNodes(:);
+					TNodes = [CubeNodeCounter(nx,ny,nz,i,j+1,k+1),CubeNodeCounter(nx,ny,nz,i,j+1,k),CubeNodeCounter(nx,ny,nz,i,j,k+1),1];
+					Triangles(Tcounter+1,:) = TNodes(:);
+				}
+				else
+				{
+					int[int] TNodes(5);
+					TNodes = [CubeNodeCounter(nx,ny,nz,i,j,k),CubeNodeCounter(nx,ny,nz,i,j+1,k),CubeNodeCounter(nx,ny,nz,i,j+1,k+1),1];
+					Triangles(Tcounter,:) = TNodes(:);
+					TNodes = [CubeNodeCounter(nx,ny,nz,i,j,k),CubeNodeCounter(nx,ny,nz,i,j,k+1),CubeNodeCounter(nx,ny,nz,i,j+1,k+1),1];
+					Triangles(Tcounter+1,:) = TNodes(:);
+				}
+				Tcounter+=2;
+				}
+			if (i==(nx-1))
+			{
+			int config = (i+j+k)%2; 
+				if(config==0)
+				{
+					int[int] TNodes(5);
+					TNodes = [CubeNodeCounter(nx,ny,nz,i+1,j,k),CubeNodeCounter(nx,ny,nz,i+1,j,k+1),CubeNodeCounter(nx,ny,nz,i+1,j+1,k+1),2];
+					Triangles(Tcounter,:) = TNodes(:);
+					TNodes = [CubeNodeCounter(nx,ny,nz,i+1,j,k),CubeNodeCounter(nx,ny,nz,i+1,j+1,k),CubeNodeCounter(nx,ny,nz,i+1,j+1,k+1),2];
+					Triangles(Tcounter+1,:) = TNodes(:);
+				}
+				else
+				{
+					int[int] TNodes(5);
+					TNodes = [CubeNodeCounter(nx,ny,nz,i+1,j+1,k),CubeNodeCounter(nx,ny,nz,i+1,j,k+1),CubeNodeCounter(nx,ny,nz,i+1,j+1,k+1),2];
+					Triangles(Tcounter,:) = TNodes(:);
+					TNodes = [CubeNodeCounter(nx,ny,nz,i+1,j,k),CubeNodeCounter(nx,ny,nz,i+1,j,k+1),CubeNodeCounter(nx,ny,nz,i+1,j+1,k),2];
+					Triangles(Tcounter+1,:) = TNodes(:);
+				}
+				Tcounter+=2;
+			}
+			if (j==0){
+			int config = (i+j+k)%2; 
+				if(config==0)
+				{
+					int[int] TNodes(5);
+					TNodes = [CubeNodeCounter(nx,ny,nz,i,j,k),CubeNodeCounter(nx,ny,nz,i+1,j,k),CubeNodeCounter(nx,ny,nz,i,j,k+1),3];
+					Triangles(Tcounter,:) = TNodes(:);
+					TNodes = [CubeNodeCounter(nx,ny,nz,i+1,j,k),CubeNodeCounter(nx,ny,nz,i+1,j,k+1),CubeNodeCounter(nx,ny,nz,i,j,k+1),3];
+					Triangles(Tcounter+1,:) = TNodes(:);
+				}
+				else
+				{
+					int[int] TNodes(5);
+					TNodes = [CubeNodeCounter(nx,ny,nz,i,j,k),CubeNodeCounter(nx,ny,nz,i+1,j,k),CubeNodeCounter(nx,ny,nz,i+1,j,k+1),3];
+					Triangles(Tcounter,:) = TNodes(:);
+					TNodes = [CubeNodeCounter(nx,ny,nz,i,j,k),CubeNodeCounter(nx,ny,nz,i,j,k+1),CubeNodeCounter(nx,ny,nz,i+1,j,k+1),3];
+					Triangles(Tcounter+1,:) = TNodes(:);
+				}
+				Tcounter+=2;
+			}
+			if (j==ny-1)
+			{
+			int config = (i+j+k)%2; 
+				if(config==0)
+				{
+					int[int] TNodes(5);
+					TNodes = [CubeNodeCounter(nx,ny,nz,i,j+1,k),CubeNodeCounter(nx,ny,nz,i,j+1,k+1),CubeNodeCounter(nx,ny,nz,i+1,j+1,k+1),4];
+					Triangles(Tcounter,:) = TNodes(:);
+					TNodes = [CubeNodeCounter(nx,ny,nz,i,j+1,k),CubeNodeCounter(nx,ny,nz,i+1,j+1,k),CubeNodeCounter(nx,ny,nz,i+1,j+1,k+1),4];
+					Triangles(Tcounter+1,:) = TNodes(:);
+				}
+				else
+				{
+					int[int] TNodes(5);
+					TNodes = [CubeNodeCounter(nx,ny,nz,i+1,j+1,k),CubeNodeCounter(nx,ny,nz,i,j+1,k),CubeNodeCounter(nx,ny,nz,i,j+1,k+1),4];
+					Triangles(Tcounter,:) = TNodes(:);
+					TNodes = [CubeNodeCounter(nx,ny,nz,i+1,j+1,k),CubeNodeCounter(nx,ny,nz,i,j+1,k+1),CubeNodeCounter(nx,ny,nz,i+1,j+1,k+1),4];
+					Triangles(Tcounter+1,:) = TNodes(:);
+				}
+				Tcounter+=2;
+			}
+			if (k==0)
+			{
+			int config = (i+j+k)%2; 
+				if(config==0)
+				{
+					int[int] TNodes(5);
+					TNodes = [CubeNodeCounter(nx,ny,nz,i,j,k),CubeNodeCounter(nx,ny,nz,i,j+1,k),CubeNodeCounter(nx,ny,nz,i+1,j,k),5];
+					Triangles(Tcounter,:) = TNodes(:);
+					TNodes = [CubeNodeCounter(nx,ny,nz,i+1,j+1,k),CubeNodeCounter(nx,ny,nz,i,j+1,k),CubeNodeCounter(nx,ny,nz,i+1,j,k),5];
+					Triangles(Tcounter+1,:) = TNodes(:);
+				}
+				else
+				{
+					int[int] TNodes(5);
+					TNodes = [CubeNodeCounter(nx,ny,nz,i,j,k),CubeNodeCounter(nx,ny,nz,i,j+1,k),CubeNodeCounter(nx,ny,nz,i+1,j+1,k),5];
+					Triangles(Tcounter,:) = TNodes(:);
+					TNodes = [CubeNodeCounter(nx,ny,nz,i,j,k),CubeNodeCounter(nx,ny,nz,i+1,j,k),CubeNodeCounter(nx,ny,nz,i+1,j+1,k),5];
+					Triangles(Tcounter+1,:) = TNodes(:);
+				}
+				Tcounter+=2;
+			}
+			if (k==nz-1)
+			{
+			int config = (i+j+k)%2; 
+				if(config==0)
+				{
+					int[int] TNodes(5);
+					TNodes = [CubeNodeCounter(nx,ny,nz,i,j,k+1),CubeNodeCounter(nx,ny,nz,i,j+1,k+1),CubeNodeCounter(nx,ny,nz,i+1,j+1,k+1),6];
+					Triangles(Tcounter,:) = TNodes(:);
+					TNodes = [CubeNodeCounter(nx,ny,nz,i,j,k+1),CubeNodeCounter(nx,ny,nz,i+1,j,k+1),CubeNodeCounter(nx,ny,nz,i+1,j+1,k+1),6];
+					Triangles(Tcounter+1,:) = TNodes(:);
+				}
+				else
+				{
+					int[int] TNodes(5);
+					TNodes = [CubeNodeCounter(nx,ny,nz,i,j,k+1),CubeNodeCounter(nx,ny,nz,i+1,j,k+1),CubeNodeCounter(nx,ny,nz,i,j+1,k+1),6];
+					Triangles(Tcounter,:) = TNodes(:);
+					TNodes = [CubeNodeCounter(nx,ny,nz,i,j+1,k+1),CubeNodeCounter(nx,ny,nz,i+1,j,k+1),CubeNodeCounter(nx,ny,nz,i+1,j+1,k+1),6];
+					Triangles(Tcounter+1,:) = TNodes(:);
+				}
+				Tcounter+=2;
+			}
+			
+			for(int m=0; m<4; m++){Tetra(Ncounter,m) = CubeNodeCounter(nx,ny,nz,T1(m,0),T1(m,1),T1(m,2));}
+			for(int m=0; m<4; m++){Tetra(Ncounter+1,m) = CubeNodeCounter(nx,ny,nz,T2(m,0),T2(m,1),T2(m,2));}
+			for(int m=0; m<4; m++){Tetra(Ncounter+2,m) = CubeNodeCounter(nx,ny,nz,T3(m,0),T3(m,1),T3(m,2));}
+			for(int m=0; m<4; m++){Tetra(Ncounter+3,m) = CubeNodeCounter(nx,ny,nz,T4(m,0),T4(m,1),T4(m,2));}
+			for(int m=0; m<4; m++){Tetra(Ncounter+4,m) = CubeNodeCounter(nx,ny,nz,T5(m,0),T5(m,1),T5(m,2));}
+			
+			////
+			int[int] ReverseElement(5);
+			ReverseElement=0;
+			for(int m=0; m<5; m++)
+			{
+				real[int] O(3),A(3),B(3),C(3);
+				O = vertices(Tetra(Ncounter+m,0)-1,:);
+				A = vertices(Tetra(Ncounter+m,1)-1,:);
+				B = vertices(Tetra(Ncounter+m,2)-1,:);
+				C = vertices(Tetra(Ncounter+m,3)-1,:);
+				//If the tetra is defined as OABC, 
+				//then the volume is V = 1/3*1/2*|AO*(AB x AC)|
+				//(https://en.wikipedia.org/wiki/Cross_product)/"analytical-geometry-volume-of-tetrahedron"
+				real tvol = CrossProdVol(O,A,B,C);
+				if(tvol>0){ReverseElement(m)=1;}
+			}	
+			////
+			for(int m=0; m<5; m++)
+			{
+				if(ReverseElement(m)){IsoCube<<Tetra(Ncounter+m,0)<<" "<<Tetra(Ncounter+m,1)<<" "<<Tetra(Ncounter+m,3)<<" "<<Tetra(Ncounter+m,2)<<" "<<Tetra(Ncounter+m,4)<<endl;}
+				else{IsoCube<<Tetra(Ncounter+m,0)<<" "<<Tetra(Ncounter+m,1)<<" "<<Tetra(Ncounter+m,2)<<" "<<Tetra(Ncounter+m,3)<<" "<<Tetra(Ncounter+m,4)<<endl;}
+			}	
+			// IsoCube<<Tetra(Ncounter,0)<<" "<<Tetra(Ncounter,1)<<" "<<Tetra(Ncounter,2)<<" "<<Tetra(Ncounter,3)<<" "<<Tetra(Ncounter,4)<<endl;
+			// IsoCube<<Tetra(Ncounter+1,0)<<" "<<Tetra(Ncounter+1,1)<<" "<<Tetra(Ncounter+1,2)<<" "<<Tetra(Ncounter+1,3)<<" "<<Tetra(Ncounter+1,4)<<endl;
+			// IsoCube<<Tetra(Ncounter+2,0)<<" "<<Tetra(Ncounter+2,1)<<" "<<Tetra(Ncounter+2,2)<<" "<<Tetra(Ncounter+2,3)<<" "<<Tetra(Ncounter+2,4)<<endl;
+			// IsoCube<<Tetra(Ncounter+3,0)<<" "<<Tetra(Ncounter+3,1)<<" "<<Tetra(Ncounter+3,2)<<" "<<Tetra(Ncounter+3,3)<<" "<<Tetra(Ncounter+3,4)<<endl;
+			// IsoCube<<Tetra(Ncounter+4,0)<<" "<<Tetra(Ncounter+4,1)<<" "<<Tetra(Ncounter+4,2)<<" "<<Tetra(Ncounter+4,3)<<" "<<Tetra(Ncounter+4,4)<<endl;
+			Ncounter+=5;	
+			//Tetra(Ncounter,4) = 0;
+		}
+	}	
+}
+IsoCube<<""<<endl;
+//TRIANGLES
+IsoCube<<"Triangles"<<endl;
+IsoCube<<Ntriangle<<endl;
+for(int m=0; m<Ntriangle; m++)
+{
+IsoCube<<Triangles(m,0)<<" "<<Triangles(m,1)<<" "<<Triangles(m,2)<<" "<<Triangles(m,3)<<endl;
+}
+IsoCube<<""<<endl;
+IsoCube<<"End"<<endl;
+}	
+return 0;	
+}	
+// ======================================================================================= //
+
+int[int] NN=[30,30,60]; // the number of step in each direction. Each number must be a multiple of 2
+int Ln=NN[0]+1,Mn=NN[1]+1,Nn=NN[2]+1;
+real [int,int] BB=[[-0.5,0.5],[-0.5,0.5],[-1.0,1.0]]; // bounding box
+IsoCubeMesh(NN[0],NN[1],NN[2],(BB(0,1)-BB(0,0)),(BB(1,1)-BB(1,0)),(BB(2,1)-BB(2,0)));// mesh generator
+
+//Checks if the mesh was generated correctly
+mesh3 Th = readmesh3("IsoCube.mesh");
+medit("IsoCube",Th);

@@ -1,0 +1,31 @@
+//author: Gabriel Delgado
+//Description: This code generates generates a conformal mesh of the iso-0 with MMG3D
+
+load "msh3"
+load "tetgen"
+load "medit"
+	
+	mesh3 Sh = readmesh3("IsoCube.mesh");
+	fespace Vh(Sh,P13d),Rh(Sh,P03d);
+	Vh Psi;
+	{
+	ifstream PsiIn("Psi.txt");
+	PsiIn>>Psi[];
+	}
+	// real ntx=1,nty=1,ntz=1;// Nb Holes along x and y for the initial level set
+	// real L=2, H=1;
+    // Psi = (-cos(pi*(ntx+1)*(x)/L)*cos(pi*(nty+1)*y/H)*cos(pi*(ntz+1)*(z+0.5)/H)-0.1);
+	
+	exec("mmg3d_O3 -in IsoCube.mesh -out adpcube.mesh -sol LevelSet.sol -hausd 0.01 -ls -hmax 0.04 -hgrad 1.3 -nr");//-hmin 0.04
+	mesh3 Th = readmesh3("adpcube.mesh");
+	//mesh3 Thtrunc = trunc(Th,Psi<=0.0);
+	try{
+	mesh3 Thtrunc = trunc(Th,region==3);
+	savemesh(Thtrunc,"Cantilever3D.mesh");
+	medit("trunc_mesh",Thtrunc);
+	}
+	catch(...)
+	{
+	cout<<"Problem applying trunc mesh"<<endl;
+	medit("trunc_mesh",Th);
+	}

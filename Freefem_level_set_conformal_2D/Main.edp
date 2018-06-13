@@ -1,0 +1,108 @@
+load "Delgado" 
+int wait=0;verbosity=0;
+// ======================================== OPTIMIZATION PARAMETERS =============================================== //
+int Niter = 100, Nupwind = 2.;// Number of iterations
+real lag = 2;// Lagrange multiplier (ref 1)
+real vol0 = 0.6; // target volume
+// ======================================== ELASTIC PARAMETERS =============================================== //
+real E=1.,NU=0.3;
+real c1 = E/(1+NU);
+real c2 = NU/(1-2*NU);
+real eps = 1.e-3;
+real contrast = 1.e-3; // relative void stiffness
+real[int,int] C1(3,3); // Hooke law material 1
+real[int,int] C2(3,3); // Hooke law material 2
+C1 = [[ c1*(1+c2), c1*c2, 0.],
+	 [ c1*c2, c1*(1+c2), 0.],
+	 [ 0.,       0.,   0.5*c1]]; 
+C2 = contrast*C1;
+// ======================================== MESH DEFINITION =============================================== //
+mesh Sh;
+int Dirichlet,Neumann,Ln,Mn;
+real L=2,H=1.;// Length and Height of the domain
+int dn=41;// Nb of unit per unit length
+Ln=L*dn;Mn=H*dn;Dirichlet=4;Neumann=2;Sh=square(Ln-1,Mn-1,[x*L,(y-0.5)*H],flags=1);
+savemesh(Sh,"cube.mesh");
+// ======================================== LOADING FUNCTIONS ========================================= //
+include "AuxiliarBasic.edp"; // Auxiliar functions level-set
+// ========================================       INITIALIZATION      ========================================= //
+Psi[] = Initialization(Psi[]);	
+ofstream Compvalue("Compliance.txt");
+ofstream Volvalue("Volume.txt");
+ofstream Lagvalue("Lagrangian.txt");
+// =====================================      MAIN LOOP OPTIMIZATION    ========================================= //
+for (int iter=0;iter<Niter;iter++){
+	
+	cout<<"=========================="<<"Iteration "<<iter<<"=========================="<<endl;
+	
+	cout<<"Computation of the interface normal, curvature and dirac measure..."<<endl;	
+	//real[int] Nn = Normal(Psi[]);
+	//N1[] = Nn(0:Vh.ndof-1); N2[] = Nn(Vh.ndof:2*Vh.ndof-1); kappa[] = Kappa(N1[],N2[]);
+	Vh dirac; dirac[] = DiracOF(Psi[]);
+	/////////////////////////////////////////////////////////////////
+	cout<<"Adapting mesh with MMG2D..."<<endl;	
+    mesh Th;
+    if(iter==0){WriteLevelSet(Psi[],Psi[].n);}
+    else
+		{
+		Th = readmesh("cube.mesh");
+		fespace Vhi(Th,P1); Vhi Psii = Psi; WriteLevelSet(Psii[],Psii[].n);
+		}
+	exec("mmg2d_O3 -in cube.mesh -out adpcube.mesh -sol LevelSet.sol -hausd 0.001 -ls -hmax 0.02 -hmin 0.01 -hgrad 1.3 -nr");
+    Th = readmesh("adpcube.mesh");
+    savemesh(Th,"cube.mesh");	
+    mesh Thtrunc = trunc(Th,region==3);// Computation on the exact structure if void+material
+	Th=Thtrunc;
+	/////////////////////////////////////////////////////////////////	
+	include "AuxiliarConformal.edp"; // Auxiliar functions level-set
+    /////////////////////////////////////////////////////////////////	
+	cout<<"Calculating density and solving elasticity problem"<<endl; 
+	Elasticity;
+	/////////////////////////////////////////////////////////////////
+	cout<<"Computing objective and constraints functions..."<<endl;
+	real J = Compliance();
+	real vol = Volume();
+	Compvalue<<J<<endl; Volvalue<<vol<<endl; Lagvalue<<J+vol*L*H<<endl;
+	
+	plot(Thtrunc,wait=0,cmm="Iteration = "+iter+", Lagrangian value = "+(J+vol*L*H));
+    /////////////////////////////////////////////////////////////////
+    Rh chiK,etaK;
+    varf varea(unused,chiK) = int2d(Th)(chiK);
+    etaK[]= varea(0,Rh);
+    real regstep = sqrt(etaK[].min);	
+	real tgv = 1e30;
+    /////////////////////////////////////////////////////////////////
+    cout<<"Shape gradient computation..."<<endl;
+	//Classical formula
+   	varf Energy(unused,test) = int2d(Th)(((CC*e(u))'*e(u))*test*1./area);
+	Rh Deriv1Global; Deriv1Global[] = Energy(0,Rh);
+	
+    //Vht Deriv1GlobalReg; Deriv1GlobalReg[] = Average(Deriv1Global[],etaK[],0);
+	Vht Deriv1GlobalReg; Deriv1GlobalReg[] = Average(Deriv1Global[],etaK[],-1);
+	
+	//Exact formula with jump
+	Vht JumpReg; JumpReg[] = ShapeGradientJump(regstep);
+	
+	//Velocity extension and regularization
+    solve regV(V,Vtest)=int2d(Th)(Vtest*V+(regstep)^2*(dx(Vtest)*dx(V)+dy(Vtest)*dy(V)))
+	+int1d(Th,Neumann)(Vtest*V*(abs(y)<=h/2?tgv:0))
+	//-int1d(Th,10)(Vtest*(JumpReg-lag));
+    +int1d(Th,10,1,3,4)(Vtest*(-Deriv1GlobalReg+lag));//must include all boundaries, even those of the box
+	
+	/////////////////////////////////////////////////////////////////
+    cout<<"Advecting level-set..."<<endl;	
+	
+	// ============      Finite differences advection and reinitialization (structured mesh)    ================== //
+	// Advection velocity	
+    //VPsi = V; //H1 extension and regularisation
+	VPsi = (Deriv1GlobalReg-lag); // natural extension
+	Psi0 = Psi;
+	dtReini = CFLreini*min(deltax,deltay); dtUpwind=CFLupwind*min(deltax,deltay)/VPsi[].linfty;
+	Parameters(deltax,deltay,Nupwind,5);
+	Schema(Psi0[],Psi[],VPsi[],dtReini,dtUpwind);	
+	
+	// ============      Method of characteristics advection and reinitialization (non-structured mesh)    ================== //
+	//V = (Deriv1GlobalReg-lag);// natural extension
+	//V = V/V[].linfty;
+	//include "Characteristics.edp";
+}

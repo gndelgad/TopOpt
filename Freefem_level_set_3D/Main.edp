@@ -1,0 +1,115 @@
+//author: Gabriel Delgado
+//Description: This code corresponds to the main optimization loop of the 3D level-set optimizer
+
+load "Delgado3D" 
+load "msh3"
+load "tetgen"
+load "medit"
+load "lapack"
+load "MUMPS"//massive parallel computing (>10000 elements) (changer pour "MUMPS_seq" en Windows)
+int wait=0;verbosity=0;
+// ======================================== OPTIMIZATION PARAMETERS =============================================== //
+int Niter = 50, Nupwind = 20.;// Number of iterations (ref Nupwind=5)
+real lag = 5.0e-1;// Lagrange multiplier (ref 0.5)
+// ======================================== ELASTIC PARAMETERS =============================================== //
+real E=1.,NU=0.3;
+real c1 = E/(1+NU);
+real c2 = NU/(1-2*NU);
+real eps = 1.e-3;
+real[int,int] C1(6,6); // Hooke law material 1
+C1 = [[ c1*(1+c2), c1*c2, c1*c2,0.,0.,0.],
+	    [ c1*c2, c1*(1+c2), c1*c2,0.,0.,0.],
+	    [ c1*c2, c1*c2, c1*(1+c2), 0,0.,0],
+      [ 0., 0., 0.,0.5*c1, 0., 0],
+      [ 0., 0., 0.,0., 0.5*c1, 0],
+      [ 0., 0., 0.,0., 0., 0.5*c1]]; 
+// ======================================== MESH DEFINITION =============================================== //
+// The information must match with the one given when constructing the mesh
+int[int] NN=[30,30,60]; // the number of step in each direction 20 20 40
+int Ln=NN[0]+1,Mn=NN[1]+1,Nn=NN[2]+1;
+real [int,int] BB=[[-0.5,0.5],[-0.5,0.5],[-1.0,1.0]]; // bounding box
+real H = (BB(0,1)-BB(0,0)), K = (BB(1,1)-BB(1,0)) ,L = (BB(2,1)-BB(2,0));
+int [int,int] Lab=[[1,2],[3,4],[5,6]]; // Boundary labels: left,right,front, back, down, right
+mesh3 Sh = readmesh3("IsoCube.mesh");
+mesh Shx = square(NN[0],NN[1],[BB(0,0)+(BB(0,1)-BB(0,0))*x,BB(1,0)+(BB(1,1)-BB(1,0))*y],flags=1);
+// ======================================== LOADING FUNCTIONS ========================================= //
+include "AuxiliarBasic.edp"; // Auxiliar functions level-set
+// ========================================       INITIALIZATION      ========================================= //
+Psi[] = Initialization(Psi[]);	
+ofstream Compvalue("Compliance.txt");
+ofstream Volvalue("Volume.txt");
+ofstream Lagvalue("Lagrangian.txt");
+// ======================================== SET MESH FEATURES FOR LEVEL-SET =============================================== //
+Rh chiK,etaK;
+varf varea(unused,chiK) = int3d(Sh,qfV=qfV1)(chiK);
+etaK[]= varea(0,Rh); // volume of each tetra
+
+real[int] ElementV1(Sh.nt),ElementV2(Sh.nt),ElementV3(Sh.nt),ElementV4(Sh.nt);//index of the node of each mesh element
+for(int i=0;i<Sh.nt;i++){ElementV1[i]=Vh(i,0);ElementV2[i]=Vh(i,1);ElementV3[i]=Vh(i,2);ElementV4[i]=Vh(i,3);}
+real[int] Vx(Sh.nv),Vy(Sh.nv),Vz(Sh.nv);
+for(int i=0;i<Sh.nv;i++){Vx[i]=Sh(i).x;Vy[i]=Sh(i).y;Vz[i]=Sh(i).z;}
+
+SetNodeInfo(Vx,Vy,Vz);
+SetElementInfo(ElementV1,ElementV2,ElementV3,ElementV4,etaK[]);
+// =====================================      MAIN LOOP OPTIMIZATION    ========================================= //
+real Lagrangian0 = 1e20;
+int valid = 1;// valid iteration
+for (int iter=0;iter<Niter;iter++){
+	
+	cout<<"=========================="<<"Iteration "<<iter<<"=========================="<<endl;
+	
+	/////////////////////////////////////////////////////////////////
+	cout<<"Writing output files..."<<endl;	
+	{
+	WriteLevelSet(PsiOK[],PsiOK[].n,iter);
+	WriteLevelSetXd3d(PsiOK[],PsiOK[].n,iter);
+	{
+	ofstream PsiOut("Psi.txt");
+	PsiOut<<Psi[];
+	}
+	}
+    /////////////////////////////////////////////////////////////////	
+	cout<<"Starting interpolation"<<endl;
+	Vh SignPsi = Sign(Psi);
+	DensityCpp(eps,Density[],Psi[],SignPsi[]);
+	cout<<"Solving elasticity problem"<<endl; 
+	Elasticity;
+	Psih[] = PsiMean(0,Rh);
+	/////////////////////////////////////////////////////////////////
+	cout<<"Computing objective and constraints functions..."<<endl;
+	real J = Compliance();
+	real vol = Volume();
+	cout<<"Volume: "<<vol<<endl;
+	cout<<"Compliance: "<<J<<endl;
+	cout<<"Lagvalue: "<<J+lag*vol*L*K*H<<endl;
+	
+	valid = 1;
+	// Optimization criterion
+	 if(1.02*Lagrangian0<(J+lag*vol*L*K*H)){
+		 Nupwind=max(int(Nupwind/2),1);Psi = PsiOK; valid=0;}
+	 else if(Lagrangian0>(J+lag*vol*L*K*H) && iter>0){Nupwind=min(200,Nupwind+2);PsiOK = Psi; Lagrangian0 = (J+lag*vol*L*K*H);}
+	 else{PsiOK=Psi;Lagrangian0 = (J+lag*vol*L*K*H);}
+	 
+	 cout<<"Nupwind: "<<Nupwind<<endl;
+	
+	if(valid)// if the iteration was accepted
+	{
+	Compvalue<<J<<endl; Volvalue<<vol<<endl; Lagvalue<<J+lag*vol*L*K*H<<endl;
+  
+    /////////////////////////////////////////////////////////////////
+	cout<<"Shape gradient discretization..."<<endl;
+	//Classical formula (choice 1)
+	varf Energy(unused,test) = int3d(Sh,qfV=qfV1)((((CC*e(u))'*e(u))-lag)*test*1./volume);
+	Rh Deriv1Global; Deriv1Global[] = Energy(0,Rh);
+	cout<<"Shape gradient averaging..."<<endl;
+	Vh Deriv1GlobalReg; Deriv1GlobalReg[] = Average(Deriv1Global[],etaK[]);
+	V = Deriv1GlobalReg;
+	/////////////////////////////////////////////////////////////////
+    cout<<"Advecting level-set..."<<endl;	
+	Psi0 = Psi;
+	dtReini = CFLreini*min(deltax,min(deltay,deltaz)); dtUpwind=CFLupwind*min(deltax,min(deltaz,deltay))/V[].linfty;
+	Parameters(deltax,deltay,deltaz,Nupwind,5);
+	Schema(Psi0[],Psi[],V[],dtReini,dtUpwind);	
+	/////////////////////////////////////////////////////////////////
+    }	
+}

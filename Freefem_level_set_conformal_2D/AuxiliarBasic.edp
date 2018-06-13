@@ -1,0 +1,104 @@
+//////////////////////////////////////////////
+//Macros 
+//////////////////////////////////////////////
+macro Diag(s) [[s,0.,0.],[0.,s,0.],[0.,0.,s]] //	
+macro Sum(A,B) (A+B) //
+macro e(u) [dx(u[0]),dy(u[1]),(dx(u[1])+dy(u[0]))/sqrt(2.)]	//
+macro Sign(a) ((a>0.)? 1.:0.)+((a<0.)? -1.:0.) //
+
+macro CC1 [[C1(0,0),C1(0,1),C1(0,2)],
+		  [C1(1,0),C1(1,1),C1(1,2)],
+		  [C1(2,0),C1(2,1),C1(2,2)]]//
+		  
+macro CC2 [[C2(0,0),C2(0,1),C2(0,2)],
+		  [C2(1,0),C2(1,1),C2(1,2)],
+		  [C2(2,0),C2(2,1),C2(2,2)]]// 
+//////////////////////////////////////////////
+//Functional spaces and main functions 
+//////////////////////////////////////////////
+fespace Vh(Sh,P1);		
+// Level set and geometry
+real ntx=5,nty=3;// Nb Holes along x and y for the initial level set
+Vh Psi = (-cos(pi*(ntx+1)*x/L)*cos(pi*(nty+1)*y/H)-0.3),Psi0;		
+Vh VPsi,VPsitest;	// velocity field					
+//////////////////////////////////////////////
+//Applied forces
+//////////////////////////////////////////////
+real h=H/5.;// half length for Neumann conditions
+macro g [0,-1*(abs(y)<h/2?1:0)]	// Surface load
+//////////////////////////////////////////////
+//Hamilton Jacobi initialization for finite differences scheme
+//////////////////////////////////////////////
+real deltax=1./dn,deltay=1./dn;
+real delta = sqrt(deltax^2+deltay^2);
+real CFLupwind = 0.9,CFLreini = 0.5,dtUpwind,dtReini;
+include "shift.edp";// Shift matrices
+Derivatives1(Dpx,Dpy,Dmx,Dmy);
+Derivatives2(Dpxx,Dpyy,Dmxx,Dmyy,D0xx,D0yy);
+Derivatives3(Dpx0,Dpy0,Dmx0,Dmy0);
+Parameters(deltax,deltay,1,50);//50
+//////////////////////////////////////////////
+//Level-set initialization
+//////////////////////////////////////////////	
+func real[int] Initialization(real[int] psi)
+{	
+Vh psi0,psi1,V;
+psi0[] = psi; psi1[] = psi; V[] = 0;
+dtReini = CFLreini*min(deltax,deltay);
+Schema(psi0[],psi1[],V[],dtReini,0.);
+return psi1[];
+}
+//////////////////////////////////////////////
+//Boundary dirac computation
+//////////////////////////////////////////////
+func real[int] DiracOF(real[int] Psi)
+{
+	real[int] dirac(Vh.ndof);//Psimid,Psic,Psicc
+	real step = 1.5*delta;
+	for (int i=0;i<Vh.ndof;i++)
+	{
+		if(Psi(i)<-1*step)
+			{dirac(i)=0;}
+		else if 
+			(Psi(i)>step) dirac(i)=0;
+		else
+			dirac(i)=1./(2*step)+1./(2*step)*cos(pi*Psi(i)/step);
+	}
+	return dirac;
+}
+//////////////////////////////////////////////
+//Density calculation on the interface
+//////////////////////////////////////////////
+func real[int] densityOF(real[int] Psi,real eps)
+{
+	real step = 1.5*delta;// ref 1.5*delta 
+	real[int] density(Vh.ndof);
+	for (int i=0;i<Vh.ndof;i++)
+	{
+		if(Psi(i)<-1*step)
+			{density(i)=1;}
+		else if 
+			(Psi(i)>step) density(i)=eps;
+		else
+			density(i)=eps+(1.-eps)/2-(1-eps)*Psi(i)/(2*step)-1./(2*pi)*sin(pi*Psi(i)/(step));
+	}
+	return density;
+}
+//////////////////////////////////////////////
+//Write LevelSet sol file
+//////////////////////////////////////////////
+func real WriteLevelSet(real[int] ppsi,real n)
+{
+	real[int] psi(n); psi=ppsi;
+	{
+		ofstream LevelSet("LevelSet.sol");
+		LevelSet<<"MeshVersionFormatted 2"<<endl;
+		LevelSet<<""<<endl;
+		LevelSet<<"Dimension 2"<<endl;
+		LevelSet<<""<<endl;
+		LevelSet<<"SolAtVertices"<<endl;
+		LevelSet<<psi.n<<endl;
+		LevelSet<<"1 1"<<endl;
+		for(int j=0;j<psi.n;j++){LevelSet<<psi(j)<<endl;}
+	}
+}

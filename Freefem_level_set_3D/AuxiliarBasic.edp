@@ -1,0 +1,140 @@
+//author: Gabriel Delgado
+//Description: This code generates auxiliary functions for the main optimization loop of the level-set optimizer
+
+// ======================================== MACROS =============================================== //
+macro Diag(s) 
+[[s,0.,0.,0.,0.,0.],[0.,s,0.,0.,0.,0.],[0.,0.,s,0.,0.,0.],[0.,0.,0.,s,0.,0.],[0.,0.,0.,0.,s,0.],[0.,0.,0.,0.,0.,s]] //	diagonal matrix
+macro e(u) 
+[dx(u[0]),dy(u[1]),dz(u[2]),(dz(u[1])+dy(u[2]))/sqrt(2.),(dx(u[2])+dz(u[0]))/sqrt(2.),(dx(u[1])+dy(u[0]))/sqrt(2.)]	// linearized strain tensor
+macro Sign(a) ((a>0.)? 1.:0.)+((a<0.)? -1.:0.) // sign function
+
+macro CC1 [[C1(0,0),C1(0,1),C1(0,2),C1(0,3),C1(0,4),C1(0,5)],
+		  [C1(1,0),C1(1,1),C1(1,2),C1(1,3),C1(1,4),C1(1,5)],
+		  [C1(2,0),C1(2,1),C1(2,2),C1(2,3),C1(2,4),C1(2,5)],
+          [C1(3,0),C1(3,1),C1(3,2),C1(3,3),C1(3,4),C1(3,5)],
+          [C1(4,0),C1(4,1),C1(4,2),C1(4,3),C1(4,4),C1(4,5)],
+          [C1(5,0),C1(5,1),C1(5,2),C1(5,3),C1(5,4),C1(5,5)]]// elasticity tensor			  
+// ======================================== FUNCTIONAL SPACES AND MAIN FUNCTIONS =============================================== //	  	  
+fespace Xh(Sh,[P13d,P13d,P13d]),Vh(Sh,P13d),Rh(Sh,P03d);//3D espaces
+fespace Vh2d(Shx,P1),Rh2d(Shx,P0); //2D espaces 
+searchMethod=1; //Necessary for P0-P0 fast interpolation
+// State functions
+macro u [u1,u2,u3] // displacement
+macro v [v1,v2,v3]	// test function displacement
+Xh u,v;			
+// Level set and geometry
+real ntx=1,nty=1,ntz=1;// Nb Holes along x, y and z for the initial level set
+Vh Psi = (-cos(pi*(ntx+1)*(x+0.5)/H)*cos(pi*(nty+1)*y/K)*cos(pi*(ntz+1)*(z)/L)-0.1),Psi0;
+Vh PsiOK = Psi;
+// Starting from a saved level set value
+// {
+// ifstream LevelSet("Psi.txt");
+// LevelSet>>Psi[];
+// }
+Vh2d Psi2d; // 2D level set function (only used for testing purposes)
+Rh Density=1; // piece-wise constant density
+Vh V,Vtest;	// velocity field
+// ======================================== PHASE/MATERIAL RECOGNITION =============================================== //
+varf PsiMean(unused,test) = int3d(Sh,qfV=qfV1)(Psi*test*1./volume);
+Rh Psih; Psih[] = PsiMean(0,Rh);
+Rh SignPsih = Sign(Psih); 									
+macro CC() (Diag(Density)*CC1)// Approximated elasticity tensor		
+// ======================================== FINITE DIFFERENCES AND HJ SOLVER INIT =============================================== //
+include "shift3d.edp"; // Shift matrices
+real delta = min(deltax,min(deltay,deltaz));//sqrt(deltax^2+deltay^2+deltaz^2);
+real CFLupwind = 0.9,CFLreini = 0.5,dtUpwind,dtReini;
+
+Derivatives1(Dpx,Dpy,Dpz,Dmx,Dmy,Dmz);
+Derivatives21(Dpxx,Dpyy,Dpzz,Dmxx,Dmyy,Dmzz);
+Derivatives22(D0xx,D0yy,D0zz);
+Derivatives3(Dpx0,Dpy0,Dpz0,Dmx0,Dmy0,Dmz0);
+Parameters(deltax,deltay,deltaz,1,50);// ref value 50
+// ======================================== LEVEL SET INIT AS SIGNED DISTANCE =============================================== //	
+func real[int] Initialization(real[int] psi)
+{	
+Vh psi0,psi1,V;
+psi0[] = psi; psi1[] = psi; V[] = 0;
+dtReini = CFLreini*min(deltax,min(deltay,deltaz));
+Schema(psi0[],psi1[],V[],dtReini,0.);
+return psi1[];
+}
+// ======================================== LEVEL SET OUTPUT FILES =============================================== //
+func real WriteLevelSet(real[int] ppsi,real n, int name)// Format compatible with MMG3D
+{
+real[int] psi(n); psi=ppsi;
+{
+ofstream LevelSet("LevelSet.sol");
+LevelSet<<"MeshVersionFormatted 2"<<endl;
+LevelSet<<""<<endl;
+LevelSet<<"Dimension 3"<<endl;
+LevelSet<<""<<endl;
+LevelSet<<"SolAtVertices"<<endl;
+LevelSet<<psi.n<<endl;
+LevelSet<<"1 1"<<endl;
+for(int j=0;j<psi.n;j++){LevelSet<<psi(j)<<endl;}
+}
+}
+
+func real WriteLevelSetXd3d(real[int] ppsi,real n, int name)// Format compatible with  XD3D
+{
+real[int] psi(n); psi=ppsi;
+{
+ofstream LevelSet("LevelSet_"+name+".psi");
+LevelSet<<psi.n<<endl;
+for(int j=0;j<psi.n;j++){LevelSet<<psi(j)<<endl;}
+}
+{
+ofstream LevelSet("LevelSet.psi"); // current solution
+LevelSet<<psi.n<<endl;
+for(int j=0;j<psi.n;j++){LevelSet<<psi(j)<<endl;}
+}
+}
+// ======================================== MECHANICAL DEFINITION =============================================== //
+//////////////////////////////////////////////
+//Applied forces
+//////////////////////////////////////////////
+real h=H/5.;// half length for Neumann conditions
+macro g [-1*(abs(x)<h/2?1:0)*(abs(y)<h/2?1:0),0,0]	// Surface load
+//////////////////////////////////////////////
+//Elasticity problem
+//////////////////////////////////////////////
+problem Elasticity(u,v,solver=sparsesolver)=
+	int3d(Sh,qfV=qfV1)((CC*e(u))'*e(v))
+    -int2d(Sh,6)(g'*v)
+	+on(5,u1=0,u2=0,u3=0);
+//////////////////////////////////////////////
+//Compliance computation
+//////////////////////////////////////////////
+func real Compliance()
+{
+real c = (int2d(Sh,6)((g'*u)));
+return c;
+}
+//////////////////////////////////////////////
+//Volume ration computation
+//////////////////////////////////////////////	
+func real Volume()
+{
+//real vol = int3d(Sh)((Psih<0))/(L*K*H);
+real vol = int3d(Sh)(Density)/(L*K*H);
+return vol;
+}
+// ======================================== INTERPOLATION FUNCTION =============================================== //
+//Interpolation function (P0->P1 3D)
+func real[int] Average(real[int] F,real[int] ar)
+	{
+	real[int] FP1(Vh.ndof),FP1n(Vh.ndof);	
+    FP1n = 1e-6*ar.min;
+		for (int i=0;i<Sh.nt;i++)
+		{
+    {
+			for (int j=0; j <4; j++)
+			{
+			  FP1[Vh(i,j)] += F[i]*ar[i];
+			  FP1n[Vh(i,j)] += 1*ar[i];
+			}
+   }
+		}
+	FP1./=FP1n;
+	return FP1;
+	}

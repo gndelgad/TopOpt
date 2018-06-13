@@ -1,0 +1,153 @@
+// =====================================      RECOVERING TOTAL MESH    ========================================= //
+
+Th = readmesh("adpcube.mesh");
+fespace Vhtt(Th,P1);
+
+// =====================================      NORMAL COMPUTATION    ========================================= //
+
+Vhtt AreaB=0,N1=0,N2=0,kappa;
+Vhtt Psiht = Psi, Psi0ht;
+			real[int] xx(3),yy(3),PsiT(3);
+			for(int i=0;i<Th.nt;i++)
+			{
+				real areaT = Th[i].area;
+				for(int j=0;j<3;j++)
+				{
+				xx(j)=Th[i][j].x;
+				yy(j)=Th[i][j].y;
+				PsiT(j)=Psiht[][Vhtt(i,j)];
+				AreaB[][Vhtt(i,j)]=AreaB[][Vhtt(i,j)]+areaT;
+				}
+				
+				real denominator = xx(0)*yy(1)-xx(0)*yy(2)-yy(0)*xx(1)+yy(0)*xx(2)-xx(2)*yy(1)+yy(2)*xx(1);
+				
+				for(int j=0;j<3;j++)
+				{
+				N1[][Vhtt(i,j)]=N1[][Vhtt(i,j)]+
+				areaT*((-yy(1)*PsiT(2)+yy(1)*PsiT(0)-yy(2)*PsiT(0)+PsiT(2)*yy(0)-PsiT(1)*yy(0)+PsiT(1)*yy(2))/denominator);
+				N2[][Vhtt(i,j)]=N2[][Vhtt(i,j)]+
+				areaT*(-(xx(0)*PsiT(2)-xx(0)*PsiT(1)+xx(2)*PsiT(1)-PsiT(2)*xx(1)+PsiT(0)*xx(1)-PsiT(0)*xx(2))/denominator);
+				}
+			}
+			N1=N1/AreaB;
+			N2=N2/AreaB;
+			
+			Vhtt nabla;
+			nabla=sqrt(N1^2+N2^2);//+(1e-5)^2
+			N1=N1/(nabla);
+			N2=N2/(nabla);
+
+Vhtt VN1=V*N1,VN2=V*N2;
+Vhtt VN1test,VN2test;
+/*
+solve regVN([VN1,VN2],[VN1test,VN2test])=int2d(Th)([VN1,VN2]'*[VN1test,VN2test]
+	+(regstep)^2*(dx(VN1)*dx(VN1test)+dy(VN2)*dy(VN2test)))
+	+int1d(Th,Neumann)([VN1,VN2]'*[VN1test,VN2test]*(abs(y)<=h/2?tgv:0))
+	-int1d(Th,10)(([VN1test,VN2test]'*[N.x,N.y])*(Deriv1GlobalReg-lag)*0.5*jump(SignPsih));
+real tfinal = 1e-4;//1e-4
+*/
+
+// =====================================      METHOD OF CHARACTERISTICS (ADVECT+MSHDIST)    ========================================= //
+
+real tfinal = 1e-1;//1e-4
+			
+//Write the solution for the first iteration
+savemesh(Th,"Th.LevelSet.mesh");
+//exec("C:/WinPython-64bit-2.7.10.3/python-2.7.10.amd64/python.exe MeshCorrect.py");
+exec("C:/WinPython-64bit-2.7.10.1/python-2.7.10.amd64/python.exe MeshCorrect.py");
+			
+			    {
+				{
+				ofstream PsiCharacOut("Th.LevelSet.chi.sol");
+				PsiCharacOut.precision(16);
+				PsiCharacOut<<"MeshVersionFormatted 2"<<endl;
+				PsiCharacOut<<""<<endl;
+				PsiCharacOut<<"Dimension 2"<<endl;
+				PsiCharacOut<<""<<endl;
+				PsiCharacOut<<"SolAtVertices"<<endl;
+				PsiCharacOut<<Vhtt.ndof<<endl;
+				PsiCharacOut<<"1 1"<<endl;
+				PsiCharacOut<<""<<endl;
+				for(int k=0;k<Psiht.n;k++){PsiCharacOut<<Psiht[][k]<<endl;}
+				PsiCharacOut<<""<<endl;
+				PsiCharacOut<<"End"<<endl;
+				}//Close the ofstream!!!
+				}
+			
+				// =========================      REINITIALIZATION    =============================== //				
+				{
+				{
+				ofstream PsiCharacOut("Th.LevelSet.sol");
+				PsiCharacOut.precision(16);
+				PsiCharacOut<<"MeshVersionFormatted 2"<<endl;
+				PsiCharacOut<<""<<endl;
+				PsiCharacOut<<"Dimension 2"<<endl;
+				PsiCharacOut<<""<<endl;
+				PsiCharacOut<<"SolAtVertices"<<endl;
+				PsiCharacOut<<Vhtt.ndof<<endl;
+				PsiCharacOut<<"1 2"<<endl;
+				PsiCharacOut<<""<<endl;
+				for(int k=0;k<Psiht.n;k++){PsiCharacOut<<VN1[][k]<<" "<<VN2[][k]<<endl;}
+				PsiCharacOut<<""<<endl;
+				PsiCharacOut<<"End"<<endl;
+				}
+				cout<<"Begin Advect"<<endl;
+				
+				//AdvectionCharac(tfinal);
+				exec("Advect_W7.exe -t "+tfinal+" Th.LevelSet.mesh");
+				exec("cp Th.LevelSet.new.chi.sol Th.LevelSet.chi.sol");
+				cout<<"End Advect"<<endl;
+				
+				//ReadSolution(Psiht[]);	
+						
+				{
+				ifstream ReadSolution("Th.LevelSet.chi.sol");
+				string line;
+				
+				for (int j=0;j<Psiht.n+8;j++)
+				{
+					if(j>=8){ReadSolution>>Psiht[][j-8];}
+					else{ReadSolution>>line;}
+				}
+				}
+				Psi0ht = Psiht;
+				cout<<"Advection OK"<<endl;
+				}
+				
+				// =========================      REINITIALIZATION    =============================== //				
+				if(!(iter%2))	
+				{
+				{
+				ofstream PsiCharacOut("Th.LevelSet.sol");
+				PsiCharacOut.precision(16);
+				PsiCharacOut<<"MeshVersionFormatted 2"<<endl;
+				PsiCharacOut<<""<<endl;
+				PsiCharacOut<<"Dimension 2"<<endl;
+				PsiCharacOut<<""<<endl;
+				PsiCharacOut<<"SolAtVertices"<<endl;
+				PsiCharacOut<<Vhtt.ndof<<endl;
+				PsiCharacOut<<"1 1"<<endl;
+				PsiCharacOut<<""<<endl;
+				for(int k=0;k<Psiht.n;k++){PsiCharacOut<<Psiht[][k]<<endl;}
+				PsiCharacOut<<""<<endl;
+				PsiCharacOut<<"End"<<endl;
+				}//Close the ofstream!!!
+				//ReinitCharac(1.);
+				exec("Dist_W7.exe Th.LevelSet.mesh -ncpu 4");
+				exec("cp Th.LevelSet.sol Th.LevelSet.chi.sol");
+				//ReadSolution(Psi0ht[]);
+				{
+				ifstream ReadSolution("Th.LevelSet.chi.sol");
+				string line;
+				for (int j=0;j<Psi0ht.n+8;j++)
+				{
+					if(j>=8){ReadSolution>>Psi0ht[][j-8];}
+					else{ReadSolution>>line;}
+				}
+				}
+				Psiht = Psi0ht;
+				cout<<"Reinitialization OK"<<endl;
+				}
+	
+	Psi = Psiht;		         
+			
